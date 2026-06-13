@@ -21,7 +21,7 @@ The hook parses `tool_input.command` for Bash invocations to detect git operatio
 
 ### Sleep cycle
 
-After 5 minutes of inactivity, Clawd gets drowsy (stops walking, sleepy expression). After 8 minutes, it falls asleep (sleeping expression, slow breathing, "zzz"). Any event or key press wakes it up with a surprised reaction.
+After 1 minute of inactivity, Clawd falls asleep — it squishes flat, breathes slowly, and "zzz" animates above it (z → zz → zzz). Any event or key press wakes it up with a surprised reaction.
 
 Keyboard shortcuts on the Cardputer itself:
 

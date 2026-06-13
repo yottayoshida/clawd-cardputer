@@ -47,15 +47,13 @@ static unsigned long lastKeyMs = 0;
 
 enum SleepState : uint8_t {
   SLEEP_AWAKE = 0,
-  SLEEP_DROWSY,
   SLEEP_SLEEPING,
 };
 
 static SleepState sleepState        = SLEEP_AWAKE;
 static unsigned long lastActivityMs = 0;
 
-static constexpr unsigned long DROWSY_TIMEOUT_MS   = 5UL * 60 * 1000;
-static constexpr unsigned long SLEEPING_TIMEOUT_MS  = 8UL * 60 * 1000;
+static constexpr unsigned long SLEEPING_TIMEOUT_MS  = 60UL * 1000;  // 1 min
 
 // ── party mode ──
 
@@ -138,22 +136,11 @@ static void sleepTransition(unsigned long now) {
   unsigned long idle = now - lastActivityMs;
   SleepState prev = sleepState;
 
-  if (idle >= SLEEPING_TIMEOUT_MS) {
-    sleepState = SLEEP_SLEEPING;
-  } else if (idle >= DROWSY_TIMEOUT_MS) {
-    sleepState = SLEEP_DROWSY;
-  } else {
-    sleepState = SLEEP_AWAKE;
-  }
+  sleepState = (idle >= SLEEPING_TIMEOUT_MS) ? SLEEP_SLEEPING : SLEEP_AWAKE;
 
-  if (sleepState != prev) {
-    if (sleepState == SLEEP_DROWSY) {
-      currentExpr = clawd::EXPR_SLEEPY;
-      walkActive = false;
-    } else if (sleepState == SLEEP_SLEEPING) {
-      currentExpr = clawd::EXPR_SLEEPING;
-      walkActive = false;
-    }
+  if (sleepState != prev && sleepState == SLEEP_SLEEPING) {
+    currentExpr = clawd::EXPR_SLEEPING;
+    walkActive = false;
     showStatus(currentExpr);
   }
 }
@@ -173,19 +160,16 @@ static void animTick(unsigned long now) {
   sleepTransition(now);
 
   // sleep guard: don't override sleep display with idle blink
-  if (sleepState >= SLEEP_DROWSY && !inReaction) {
+  if (sleepState == SLEEP_SLEEPING && !inReaction) {
     float breathPhase = (float)(now % 3000) / 3000.0f * 6.2831853f;
-    float amp = (sleepState == SLEEP_SLEEPING) ? BREATH_AMP * 0.5f : (float)BREATH_AMP;
-    int breathY = (int)(sinf(breathPhase) * amp);
+    int breathY = (int)(sinf(breathPhase) * BREATH_AMP * 0.5f);
     drawClawdToCanvas(currentExpr, 0, breathY);
 
-    if (sleepState == SLEEP_SLEEPING) {
-      int ty = 135 - 28;
-      M5Cardputer.Display.setTextSize(1);
-      M5Cardputer.Display.setTextColor(0x4A49);
-      M5Cardputer.Display.setCursor(110, ty);
-      M5Cardputer.Display.print("zzz");
-    }
+    int zCount = (int)((now / 800) % 3) + 1;
+    M5Cardputer.Display.setTextSize(2);
+    M5Cardputer.Display.setTextColor(0x4A49);
+    M5Cardputer.Display.setCursor(155, 28);
+    for (int i = 0; i < zCount; i++) M5Cardputer.Display.print("z");
     return;
   }
 
@@ -357,7 +341,7 @@ static void handleSerialEvent(const char *event) {
   lastEventMs = now;
   recordActivity();
 
-  if (sleepState >= SLEEP_DROWSY) {
+  if (sleepState == SLEEP_SLEEPING) {
     wakeUp();
     return;
   }
@@ -385,7 +369,7 @@ static void handleKey() {
   if (now - lastKeyMs < DEBOUNCE_MS) return;
   lastKeyMs = now;
   recordActivity();
-  if (sleepState >= SLEEP_DROWSY) {
+  if (sleepState == SLEEP_SLEEPING) {
     wakeUp();
     return;
   }
