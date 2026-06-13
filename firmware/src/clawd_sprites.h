@@ -99,6 +99,20 @@ constexpr uint8_t SHAPE_EXCITED[GRID_ROWS][GRID_COLS] = {
     {0,1,0,0,0,1,0,0,0,0,1,0,0,0,1,0},
 };
 
+// SLEEPING — eyes fully closed, stalks drooped, legs together
+constexpr uint8_t SHAPE_SLEEPING[GRID_ROWS][GRID_COLS] = {
+    {0,0,0,0,0,1,1,1,1,1,1,0,0,0,0,0},  // minimal stalks
+    {0,0,0,1,1,1,1,1,1,1,1,1,1,0,0,0},
+    {0,0,1,1,1,1,1,1,1,1,1,1,1,1,0,0},  // fully closed eyes
+    {0,0,1,1,1,1,1,1,1,1,1,1,1,1,0,0},
+    {0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0},  // ears slightly drooped
+    {0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0},
+    {0,0,1,1,1,1,1,1,1,1,1,1,1,1,0,0},
+    {0,0,1,1,1,1,1,1,1,1,1,1,1,1,0,0},
+    {0,0,0,0,1,1,0,0,0,0,1,1,0,0,0,0},  // legs close together
+    {0,0,0,0,1,1,0,0,0,0,1,1,0,0,0,0},
+};
+
 enum Expression : uint8_t {
   EXPR_IDLE = 0,
   EXPR_BLINK,
@@ -106,6 +120,7 @@ enum Expression : uint8_t {
   EXPR_SURPRISED,
   EXPR_SLEEPY,
   EXPR_EXCITED,
+  EXPR_SLEEPING,
   EXPR_COUNT,
 };
 
@@ -116,6 +131,7 @@ inline const uint8_t (*shapeFor(Expression e))[GRID_COLS] {
     case EXPR_SURPRISED: return SHAPE_SURPRISED;
     case EXPR_SLEEPY:    return SHAPE_SLEEPY;
     case EXPR_EXCITED:   return SHAPE_EXCITED;
+    case EXPR_SLEEPING:  return SHAPE_SLEEPING;
     default:             return SHAPE_IDLE;
   }
 }

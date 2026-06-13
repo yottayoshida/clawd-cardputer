@@ -6,14 +6,22 @@ A developer tamagotchi running on M5Stack Cardputer ADV. It reacts to your Claud
 
 A pixel-art character ("Clawd") lives on the Cardputer's 240x135 display. It walks, bobs, breathes, and blinks on its own. When Claude Code invokes a tool, the hook script sends the event over USB serial, and Clawd reacts:
 
-| Event | Expression | Sound |
-|-------|-----------|-------|
-| `bash` `read` `glob` `grep` | Blink | — |
-| `edit` | Blink | — |
-| `write` `search` | Happy | tone |
-| `test` | Surprised | tone |
-| `commit` `push` | Excited | tone |
-| `/develop` | **Party mode** | melody |
+| Event | Expression | Sound | Source |
+|-------|-----------|-------|--------|
+| `bash` `read` `glob` `grep` `edit` | Blink | — | tool name |
+| `write` `search` | Happy | tone | tool name |
+| `test_pass` `clean` | Happy | tone | command parse |
+| `test_fail` `conflict` | Surprised | tone | command parse |
+| `branch` `pr_open` | Excited | tone | command parse |
+| `dirty` | Sleepy | tone | command parse |
+| `commit` `push` | Excited | tone | tool name |
+| `/develop` | **Party mode** | melody | skill |
+
+The hook parses `tool_input.command` for Bash invocations to detect git operations (`git status`, `git checkout -b`, `gh pr create`, merge conflicts) and test runners (`pytest`, `cargo test`, `npm test`, and common wrappers like `uv run pytest`).
+
+### Sleep cycle
+
+After 5 minutes of inactivity, Clawd gets drowsy (stops walking, sleepy expression). After 8 minutes, it falls asleep (sleeping expression, slow breathing, "zzz"). Any event or key press wakes it up with a surprised reaction.
 
 Keyboard shortcuts on the Cardputer itself:
 
@@ -74,7 +82,7 @@ The hook takes effect on the next Claude Code session.
 firmware/
   platformio.ini        # PlatformIO build config
   src/main.cpp          # Application logic (animations, events, serial, party mode)
-  src/clawd_sprites.h   # Pixel-art character data (16x10 grid, 6 expressions)
+  src/clawd_sprites.h   # Pixel-art character data (16x10 grid, 7 expressions)
   assets/source/        # Design notes (not redistributed)
 hook/
   advcchi-hook.sh       # PostToolUse hook script
@@ -84,9 +92,10 @@ hook/
 ## How the hook works
 
 1. Claude Code fires `PostToolUse` after every tool invocation
-2. `advcchi-hook.sh` reads the JSON event from stdin, extracts `tool_name`
-3. The tool name is sent over USB serial (115200 baud) via pyserial
-4. The Cardputer's firmware matches it against the event table and triggers the appropriate reaction
+2. `advcchi-hook.sh` reads the JSON event from stdin
+3. For Bash tool calls, it parses `tool_input.command` to classify git operations and test results; otherwise falls back to `tool_name`
+4. A single fixed-string event name is sent over USB serial (115200 baud) via pyserial
+5. The Cardputer's firmware matches it against the event table and triggers the appropriate reaction
 
 The hook is non-blocking — if the Cardputer is disconnected, it silently does nothing.
 

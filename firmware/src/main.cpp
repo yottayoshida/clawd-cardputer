@@ -43,6 +43,20 @@ static const uint8_t VOLUME_TABLE[] = {32, 64, 128};
 static constexpr unsigned long DEBOUNCE_MS = 200;
 static unsigned long lastKeyMs = 0;
 
+// ── sleep cycle ──
+
+enum SleepState : uint8_t {
+  SLEEP_AWAKE = 0,
+  SLEEP_DROWSY,
+  SLEEP_SLEEPING,
+};
+
+static SleepState sleepState        = SLEEP_AWAKE;
+static unsigned long lastActivityMs = 0;
+
+static constexpr unsigned long DROWSY_TIMEOUT_MS   = 5UL * 60 * 1000;
+static constexpr unsigned long SLEEPING_TIMEOUT_MS  = 8UL * 60 * 1000;
+
 // ── party mode ──
 
 static bool partyActive              = false;
@@ -93,7 +107,9 @@ static void drawClawdToCanvas(clawd::Expression expr,
 
 static void showStatus(clawd::Expression expr) {
   static const char *labels[] = {
-      "idle", "blink", "happy", "surprised", "sleepy", "excited"};
+      "idle", "blink", "happy", "surprised", "sleepy", "excited", "sleeping"};
+  static_assert(sizeof(labels) / sizeof(labels[0]) == clawd::EXPR_COUNT,
+                "labels[] must match Expression enum count");
   int ty = 135 - 14;
   M5Cardputer.Display.fillRect(0, ty, 240, 14, TFT_BLACK);
   M5Cardputer.Display.setTextSize(1);
@@ -108,9 +124,71 @@ static void showStatus(clawd::Expression expr) {
   }
 }
 
+// ── forward declarations ──
+
+static void triggerExpression(clawd::Expression expr,
+                              unsigned long durationMs, int toneHz,
+                              bool stopWalk = true);
+
 // ── animation ──
 
+static void sleepTransition(unsigned long now) {
+  if (partyActive || inReaction) return;
+
+  unsigned long idle = now - lastActivityMs;
+  SleepState prev = sleepState;
+
+  if (idle >= SLEEPING_TIMEOUT_MS) {
+    sleepState = SLEEP_SLEEPING;
+  } else if (idle >= DROWSY_TIMEOUT_MS) {
+    sleepState = SLEEP_DROWSY;
+  } else {
+    sleepState = SLEEP_AWAKE;
+  }
+
+  if (sleepState != prev) {
+    if (sleepState == SLEEP_DROWSY) {
+      currentExpr = clawd::EXPR_SLEEPY;
+      walkActive = false;
+    } else if (sleepState == SLEEP_SLEEPING) {
+      currentExpr = clawd::EXPR_SLEEPING;
+      walkActive = false;
+    }
+    showStatus(currentExpr);
+  }
+}
+
+static void wakeUp() {
+  if (sleepState == SLEEP_SLEEPING) {
+    triggerExpression(clawd::EXPR_SURPRISED, 800, 600);
+  }
+  sleepState = SLEEP_AWAKE;
+}
+
+static void recordActivity() {
+  lastActivityMs = millis();
+}
+
 static void animTick(unsigned long now) {
+  sleepTransition(now);
+
+  // sleep guard: don't override sleep display with idle blink
+  if (sleepState >= SLEEP_DROWSY && !inReaction) {
+    float breathPhase = (float)(now % 3000) / 3000.0f * 6.2831853f;
+    float amp = (sleepState == SLEEP_SLEEPING) ? BREATH_AMP * 0.5f : (float)BREATH_AMP;
+    int breathY = (int)(sinf(breathPhase) * amp);
+    drawClawdToCanvas(currentExpr, 0, breathY);
+
+    if (sleepState == SLEEP_SLEEPING) {
+      int ty = 135 - 28;
+      M5Cardputer.Display.setTextSize(1);
+      M5Cardputer.Display.setTextColor(0x4A49);
+      M5Cardputer.Display.setCursor(110, ty);
+      M5Cardputer.Display.print("zzz");
+    }
+    return;
+  }
+
   if (walkActive && now >= nextStepMs) {
     walkX += walkDir * STEP_PX;
     if (walkX >= WALK_RANGE || walkX <= -WALK_RANGE) walkDir = -walkDir;
@@ -150,6 +228,8 @@ static void startParty() {
   partyNextNoteMs = 0;
   inReaction = false;
   walkActive = false;
+  sleepState = SLEEP_AWAKE;
+  recordActivity();
   Serial.println("[clawd] party mode!");
 }
 
@@ -160,6 +240,7 @@ static void partyTick(unsigned long now) {
     inReaction = false;
     walkActive = true;
     walkX = 0;
+    recordActivity();
     M5Cardputer.Display.fillScreen(TFT_BLACK);
     showStatus(clawd::EXPR_IDLE);
     return;
@@ -223,7 +304,7 @@ static void partyTick(unsigned long now) {
 
 static void triggerExpression(clawd::Expression expr,
                               unsigned long durationMs, int toneHz,
-                              bool stopWalk = true) {
+                              bool stopWalk) {
   currentExpr = expr;
   reactionEndMs = millis() + durationMs;
   inReaction = true;
@@ -246,16 +327,24 @@ struct EventDef {
 };
 
 static const EventDef EVENT_TABLE[] = {
-    {"bash",   clawd::EXPR_BLINK,     0,    300,  false},
-    {"edit",   clawd::EXPR_BLINK,     0,    300,  false},
-    {"read",   clawd::EXPR_BLINK,     0,    200,  false},
-    {"glob",   clawd::EXPR_BLINK,     0,    200,  false},
-    {"grep",   clawd::EXPR_BLINK,     0,    200,  false},
-    {"write",  clawd::EXPR_HAPPY,     800,  600,  true},
-    {"test",   clawd::EXPR_SURPRISED, 600,  600,  true},
-    {"search", clawd::EXPR_HAPPY,     700,  500,  true},
-    {"commit", clawd::EXPR_EXCITED,   1200, 1500, true},
-    {"push",   clawd::EXPR_EXCITED,   1500, 2000, true},
+    {"bash",      clawd::EXPR_BLINK,     0,    300,  false},
+    {"edit",      clawd::EXPR_BLINK,     0,    300,  false},
+    {"read",      clawd::EXPR_BLINK,     0,    200,  false},
+    {"glob",      clawd::EXPR_BLINK,     0,    200,  false},
+    {"grep",      clawd::EXPR_BLINK,     0,    200,  false},
+    {"write",     clawd::EXPR_HAPPY,     800,  600,  true},
+    {"test",      clawd::EXPR_SURPRISED, 600,  600,  true},
+    {"search",    clawd::EXPR_HAPPY,     700,  500,  true},
+    {"commit",    clawd::EXPR_EXCITED,   1200, 1500, true},
+    {"push",      clawd::EXPR_EXCITED,   1500, 2000, true},
+    {"dirty",     clawd::EXPR_SLEEPY,    400,  500,  false},
+    {"clean",     clawd::EXPR_HAPPY,     900,  800,  true},
+    {"conflict",  clawd::EXPR_SURPRISED, 300,  1000, true},
+    {"branch",    clawd::EXPR_EXCITED,   1000, 800,  true},
+    {"pr_open",   clawd::EXPR_EXCITED,   1400, 1500, true},
+    {"test_pass", clawd::EXPR_HAPPY,     1100, 800,  true},
+    {"test_fail", clawd::EXPR_SURPRISED, 200,  1000, true},
+    {"test_run",  clawd::EXPR_BLINK,     0,    400,  false},
 };
 
 static unsigned long lastEventMs = 0;
@@ -266,6 +355,12 @@ static void handleSerialEvent(const char *event) {
   unsigned long now = millis();
   if (now - lastEventMs < DEBOUNCE_MS) return;
   lastEventMs = now;
+  recordActivity();
+
+  if (sleepState >= SLEEP_DROWSY) {
+    wakeUp();
+    return;
+  }
 
   if (strcmp(event, "party") == 0) {
     startParty();
@@ -289,6 +384,11 @@ static void handleKey() {
   unsigned long now = millis();
   if (now - lastKeyMs < DEBOUNCE_MS) return;
   lastKeyMs = now;
+  recordActivity();
+  if (sleepState >= SLEEP_DROWSY) {
+    wakeUp();
+    return;
+  }
 
   auto &state = M5Cardputer.Keyboard.keysState();
 
@@ -357,6 +457,7 @@ void setup() {
   M5Cardputer.Speaker.tone(1100, 80);
 
   showStatus(clawd::EXPR_IDLE);
+  lastActivityMs = millis();
 
   Serial.printf("[clawd] sprite %dx%d (%dB), heap: %u\n",
                 SPRITE_W, SPRITE_H, SPRITE_W * SPRITE_H * 2,
