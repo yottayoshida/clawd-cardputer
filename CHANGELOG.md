@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.3.0] — 2026-06-13
+
+**Summary**: Mini-Clawds spawn as subagent companions.
+
+### Added
+- Mini-Clawd system: up to 2 small Clawds appear when Claude Code subagents start, despawn when they stop (#10)
+- Per-mini M5Canvas sprite buffers for artifact-free rendering (40×48px each)
+- Active walk+bob animation: 50ms steps, 3px stride, 6px bounce, random direction changes
+- "Piropiropiin" fanfare sound on spawn, parent shows HAPPY expression
+- 5-minute auto-despawn timeout for stale subagent sessions
+- Hook argument mode: `clawd-hook.sh` accepts event name as `$1` for SubagentStart/SubagentStop hooks
+- `install-hook.sh` manages PostToolUse + SubagentStart + SubagentStop atomically
+
 ## [0.2.1] — 2026-06-13
 
 **Summary**: Renamed project from ADVcchi to clawd-cardputer.
