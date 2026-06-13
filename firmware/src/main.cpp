@@ -55,6 +55,61 @@ static unsigned long lastActivityMs = 0;
 
 static constexpr unsigned long SLEEPING_TIMEOUT_MS  = 60UL * 1000;  // 1 min
 
+// ── mini-Clawds (subagent companions) ──
+
+static constexpr int MAX_MINIS = 2;
+static constexpr int MINI_QW = 2;
+static constexpr int MINI_QH = 3;
+static constexpr int MINI_W = clawd::GRID_COLS * MINI_QW;  // 32
+static constexpr int MINI_H = clawd::GRID_ROWS * MINI_QH;  // 30
+
+static constexpr int MINI_WALK_RANGE = 10;
+static constexpr int MINI_STEP_PX   = 3;
+static constexpr int MINI_STEP_MS   = 50;
+static constexpr int MINI_BOB_PX    = 6;
+
+static const uint16_t MINI_COLORS[MAX_MINIS] = {
+    ((90 >> 3) << 11) | ((140 >> 2) << 5) | (220 >> 3),   // blue
+    ((90 >> 3) << 11) | ((210 >> 2) << 5) | (140 >> 3),   // green
+};
+
+static const int MINI_CANVAS_X[MAX_MINIS] = {0, 200};
+static constexpr int MINI_CANVAS_W = 40;
+static constexpr int MINI_CANVAS_H = MINI_H + MINI_BOB_PX * 2 + 6;  // 48
+static constexpr int MINI_HOME_OFFSET_X = 4;
+static constexpr int MINI_HOME_OFFSET_Y = MINI_BOB_PX + 3;  // 9
+static constexpr int MINI_CANVAS_Y = 52 - MINI_HOME_OFFSET_Y;  // 43
+
+static M5Canvas miniCanvas[MAX_MINIS] = {
+    M5Canvas(&M5Cardputer.Display),
+    M5Canvas(&M5Cardputer.Display),
+};
+
+struct MiniState {
+  int walkX;
+  int walkDir;
+  int walkStep;
+  unsigned long nextStepMs;
+};
+
+static int miniCount = 0;
+static MiniState minis[MAX_MINIS] = {};
+static unsigned long lastMiniEventMs = 0;
+static constexpr unsigned long MINI_TIMEOUT_MS = 5UL * 60 * 1000;
+
+// fanfare sound (non-blocking, driven from loop)
+static int fanfarePhase = -1;
+static unsigned long fanfareNextMs = 0;
+struct FanfareNote { int freq; int durMs; int gapMs; };
+static const FanfareNote FANFARE_NOTES[] = {
+    {1000, 40, 20},   // ぴ
+    {1400, 40, 20},   // ろ
+    {1100, 40, 20},   // ぴ
+    {1500, 40, 20},   // ろ
+    {2000, 350, 0},   // ぴ〜〜ん
+};
+static constexpr int FANFARE_COUNT = 5;
+
 // ── party mode ──
 
 static bool partyActive              = false;
@@ -128,6 +183,90 @@ static void triggerExpression(clawd::Expression expr,
                               unsigned long durationMs, int toneHz,
                               bool stopWalk = true);
 
+// ── mini-Clawd drawing ──
+
+static void drawMiniClawds(unsigned long now) {
+  if (miniCount <= 0) return;
+
+  if (now - lastMiniEventMs > MINI_TIMEOUT_MS) {
+    for (int i = 0; i < MAX_MINIS; i++) {
+      miniCanvas[i].fillSprite(TFT_BLACK);
+      miniCanvas[i].pushSprite(MINI_CANVAS_X[i], MINI_CANVAS_Y);
+    }
+    miniCount = 0;
+    return;
+  }
+
+  for (int i = 0; i < miniCount && i < MAX_MINIS; i++) {
+    MiniState &m = minis[i];
+
+    if (now >= m.nextStepMs) {
+      m.walkX += m.walkDir * MINI_STEP_PX;
+      if (m.walkX >= MINI_WALK_RANGE || m.walkX <= -MINI_WALK_RANGE)
+        m.walkDir = -m.walkDir;
+      if ((esp_random() % 4) == 0) m.walkDir = -m.walkDir;
+      m.walkStep++;
+      m.nextStepMs = now + MINI_STEP_MS;
+    }
+
+    int bobY = (m.walkStep % 3 == 0) ? -MINI_BOB_PX
+             : (m.walkStep % 3 == 1) ?  0
+             :                          -MINI_BOB_PX / 2;
+
+    float phase = (float)((now + (unsigned long)i * 1100) % 2000) / 2000.0f * 6.2831853f;
+    int breathY = (int)(sinf(phase) * 1.5f);
+
+    int ox = MINI_HOME_OFFSET_X + m.walkX;
+    int oy = MINI_HOME_OFFSET_Y + bobY + breathY;
+
+    miniCanvas[i].fillSprite(TFT_BLACK);
+
+    const auto *shape = clawd::shapeFor(clawd::EXPR_HAPPY);
+    for (int r = 0; r < clawd::GRID_ROWS; r++) {
+      for (int c = 0; c < clawd::GRID_COLS; c++) {
+        if (shape[r][c]) {
+          miniCanvas[i].fillRect(ox + c * MINI_QW, oy + r * MINI_QH,
+                                  MINI_QW, MINI_QH, MINI_COLORS[i]);
+        }
+      }
+    }
+
+    miniCanvas[i].pushSprite(MINI_CANVAS_X[i], MINI_CANVAS_Y);
+  }
+}
+
+static void spawnMiniClawd() {
+  if (miniCount >= MAX_MINIS) return;
+  int idx = miniCount;
+  minis[idx] = {0, (idx == 0) ? 1 : -1, 0, millis()};
+  miniCount++;
+  lastMiniEventMs = millis();
+  fanfarePhase = 0;
+  fanfareNextMs = millis();
+  triggerExpression(clawd::EXPR_HAPPY, 800, 0);
+  Serial.printf("[clawd] mini spawned (%d active)\n", miniCount);
+}
+
+static void despawnMiniClawd() {
+  if (miniCount <= 0) return;
+  miniCount--;
+  miniCanvas[miniCount].fillSprite(TFT_BLACK);
+  miniCanvas[miniCount].pushSprite(MINI_CANVAS_X[miniCount], MINI_CANVAS_Y);
+  lastMiniEventMs = millis();
+  if (!muted) M5Cardputer.Speaker.tone(400, 80);
+  Serial.printf("[clawd] mini despawned (%d active)\n", miniCount);
+}
+
+static void fanfareTick(unsigned long now) {
+  if (fanfarePhase < 0 || fanfarePhase >= FANFARE_COUNT) return;
+  if (now < fanfareNextMs) return;
+  const auto &n = FANFARE_NOTES[fanfarePhase];
+  if (!muted) M5Cardputer.Speaker.tone(n.freq, n.durMs);
+  fanfareNextMs = now + n.durMs + n.gapMs;
+  fanfarePhase++;
+  if (fanfarePhase >= FANFARE_COUNT) fanfarePhase = -1;
+}
+
 // ── animation ──
 
 static void sleepTransition(unsigned long now) {
@@ -170,6 +309,7 @@ static void animTick(unsigned long now) {
     M5Cardputer.Display.setTextColor(0x4A49);
     M5Cardputer.Display.setCursor(155, 28);
     for (int i = 0; i < zCount; i++) M5Cardputer.Display.print("z");
+    drawMiniClawds(now);
     return;
   }
 
@@ -201,6 +341,7 @@ static void animTick(unsigned long now) {
   }
 
   drawClawdToCanvas(currentExpr, walkX, bobY + breathY);
+  drawMiniClawds(now);
 }
 
 // ── party mode ──
@@ -351,6 +492,15 @@ static void handleSerialEvent(const char *event) {
     return;
   }
 
+  if (strcmp(event, "subagent_start") == 0) {
+    spawnMiniClawd();
+    return;
+  }
+  if (strcmp(event, "subagent_stop") == 0) {
+    despawnMiniClawd();
+    return;
+  }
+
   for (const auto &e : EVENT_TABLE) {
     if (strcmp(event, e.name) == 0) {
       triggerExpression(e.expr, e.durationMs, e.toneHz, e.stopWalk);
@@ -435,6 +585,11 @@ void setup() {
   canvas.setColorDepth(16);
   canvas.createSprite(SPRITE_W, SPRITE_H);
 
+  for (int i = 0; i < MAX_MINIS; i++) {
+    miniCanvas[i].setColorDepth(16);
+    miniCanvas[i].createSprite(MINI_CANVAS_W, MINI_CANVAS_H);
+  }
+
   M5Cardputer.Speaker.setVolume(VOLUME_TABLE[0]);
   M5Cardputer.Speaker.tone(880, 100);
   delay(120);
@@ -469,6 +624,7 @@ void loop() {
   }
 
   unsigned long now = millis();
+  fanfareTick(now);
   if (partyActive) {
     partyTick(now);
   } else {

@@ -18,20 +18,25 @@ require_jq() {
   fi
 }
 
-is_installed() {
-  jq -e '.hooks.PostToolUse[]? | select(.hooks[]?.command | contains("clawd-hook.sh"))' \
+has_hook() {
+  jq -e ".hooks.${1}[]? | select(.hooks[]?.command | contains(\"clawd-hook.sh\"))" \
     "$SETTINGS" > /dev/null 2>&1
+}
+
+is_installed() {
+  has_hook "PostToolUse"
 }
 
 case "$ACTION" in
   status)
     require_jq
-    if is_installed; then
-      echo "clawd hook is installed."
-      jq '.hooks.PostToolUse[] | select(.hooks[]?.command | contains("clawd-hook.sh"))' "$SETTINGS"
-    else
-      echo "clawd hook is NOT installed."
-    fi
+    for evt in PostToolUse SubagentStart SubagentStop; do
+      if has_hook "$evt"; then
+        echo "clawd hook ($evt): installed"
+      else
+        echo "clawd hook ($evt): NOT installed"
+      fi
+    done
     exit 0
     ;;
 
@@ -43,15 +48,18 @@ case "$ACTION" in
     fi
     cp "$SETTINGS" "$SETTINGS.bak.$(date +%Y%m%d%H%M%S)"
     tmp=$(mktemp)
-    jq '.hooks.PostToolUse |= map(select(.hooks[]?.command | contains("clawd-hook.sh") | not))' \
-      "$SETTINGS" > "$tmp"
+    jq '
+      .hooks.PostToolUse |= map(select(.hooks[]?.command | contains("clawd-hook.sh") | not)) |
+      .hooks.SubagentStart |= map(select(.hooks[]?.command | contains("clawd-hook.sh") | not)) |
+      .hooks.SubagentStop |= map(select(.hooks[]?.command | contains("clawd-hook.sh") | not))
+    ' "$SETTINGS" > "$tmp"
     if ! jq empty "$tmp" 2>/dev/null; then
       echo "Error: generated settings.json is invalid. Aborting." >&2
       rm -f "$tmp"
       exit 1
     fi
     mv "$tmp" "$SETTINGS"
-    echo "clawd hook removed. Backup saved."
+    echo "clawd hook removed (PostToolUse + SubagentStart + SubagentStop). Backup saved."
     exit 0
     ;;
 
@@ -63,7 +71,16 @@ case "$ACTION" in
     fi
     echo "Would add to $SETTINGS:"
     echo ""
+    echo "PostToolUse:"
     jq -n --arg cmd "$HOOK_PATH" \
+      '{"hooks": [{"command": $cmd, "type": "command"}], "matcher": "*"}'
+    echo ""
+    echo "SubagentStart:"
+    jq -n --arg cmd "$HOOK_PATH subagent_start" \
+      '{"hooks": [{"command": $cmd, "type": "command"}], "matcher": "*"}'
+    echo ""
+    echo "SubagentStop:"
+    jq -n --arg cmd "$HOOK_PATH subagent_stop" \
       '{"hooks": [{"command": $cmd, "type": "command"}], "matcher": "*"}'
     exit 0
     ;;
@@ -86,9 +103,11 @@ case "$ACTION" in
     cp "$SETTINGS" "$SETTINGS.bak.$(date +%Y%m%d%H%M%S)"
 
     tmp=$(mktemp)
-    jq --arg cmd "$HOOK_PATH" \
-      '.hooks.PostToolUse += [{"hooks": [{"command": $cmd, "type": "command"}], "matcher": "*"}]' \
-      "$SETTINGS" > "$tmp"
+    jq --arg cmd "$HOOK_PATH" --arg cmd_start "$HOOK_PATH subagent_start" --arg cmd_stop "$HOOK_PATH subagent_stop" '
+      .hooks.PostToolUse = (.hooks.PostToolUse // []) + [{"hooks": [{"command": $cmd, "type": "command"}], "matcher": "*"}] |
+      .hooks.SubagentStart = (.hooks.SubagentStart // []) + [{"hooks": [{"command": $cmd_start, "type": "command"}], "matcher": "*"}] |
+      .hooks.SubagentStop = (.hooks.SubagentStop // []) + [{"hooks": [{"command": $cmd_stop, "type": "command"}], "matcher": "*"}]
+    ' "$SETTINGS" > "$tmp"
 
     if ! jq empty "$tmp" 2>/dev/null; then
       echo "Error: generated settings.json is invalid. Aborting." >&2
@@ -96,17 +115,8 @@ case "$ACTION" in
       exit 1
     fi
 
-    existing_count=$(jq '.hooks.PostToolUse | length' "$SETTINGS")
-    new_count=$(jq '.hooks.PostToolUse | length' "$tmp")
-    if [ "$new_count" -ne "$((existing_count + 1))" ]; then
-      echo "Error: unexpected entry count change ($existing_count -> $new_count). Aborting." >&2
-      rm -f "$tmp"
-      exit 1
-    fi
-
     mv "$tmp" "$SETTINGS"
-    echo "clawd hook installed."
-    echo "  PostToolUse entries: $existing_count -> $new_count"
+    echo "clawd hook installed (PostToolUse + SubagentStart + SubagentStop)."
     echo "  Backup: $SETTINGS.bak.*"
     echo ""
     echo "Restart Claude Code for the hook to take effect."

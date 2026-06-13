@@ -1,49 +1,54 @@
 #!/bin/bash
-# PostToolUse hook — classifies tool invocations and sends events
-# to Cardputer ADV via USB serial.
+# PostToolUse / SubagentStart / SubagentStop hook — classifies events
+# and sends them to Cardputer ADV via USB serial.
 # Priority: test runner > git operation > skill > tool_name fallback.
 # Only fixed string literals are sent over serial (security invariant).
 
 input=$(cat)
 
-tool_name=$(printf '%s' "$input" | jq -r '(.tool_name // "" | ascii_downcase)' 2>/dev/null)
-event="$tool_name"
+# argument mode: SubagentStart/SubagentStop hooks pass the event as $1
+if [ $# -ge 1 ]; then
+  event="$1"
+else
+  tool_name=$(printf '%s' "$input" | jq -r '(.tool_name // "" | ascii_downcase)' 2>/dev/null)
+  event="$tool_name"
 
-if [ "$tool_name" = "bash" ]; then
-  cmd=$(printf '%s' "$input" | jq -r '.tool_input.command // ""' 2>/dev/null)
-  stdout_head=$(printf '%s' "$input" | jq -r '.tool_response.stdout // "" | .[0:4096]' 2>/dev/null)
+  if [ "$tool_name" = "bash" ]; then
+    cmd=$(printf '%s' "$input" | jq -r '.tool_input.command // ""' 2>/dev/null)
+    stdout_head=$(printf '%s' "$input" | jq -r '.tool_response.stdout // "" | .[0:4096]' 2>/dev/null)
 
-  # test runner detection (highest priority — check fail before pass)
-  if [[ "$cmd" =~ (^|[[:space:]\;\&\|\(])(pytest|cargo[[:space:]]+test|npm[[:space:]]+test|npx[[:space:]]+vitest|pnpm[[:space:]]+test|uv[[:space:]]+run[[:space:]]+pytest|poetry[[:space:]]+run[[:space:]]+pytest|cargo[[:space:]]+nextest[[:space:]]+run) ]]; then
-    if [[ "$stdout_head" =~ FAILED|failed|error ]]; then
-      event="test_fail"
-    elif [[ "$stdout_head" =~ "test result: ok"|passed ]]; then
-      event="test_pass"
-    else
-      event="test_run"
-    fi
-  # git operation detection
-  elif [[ "$cmd" =~ (^|[[:space:]\;\&\|\(])gh[[:space:]]+pr[[:space:]]+create ]]; then
-    event="pr_open"
-  elif [[ "$cmd" =~ (^|[[:space:]\;\&\|\(])git[[:space:]] ]]; then
-    if [[ "$cmd" =~ git[[:space:]]+(checkout|switch)[[:space:]]+-[bc] ]]; then
-      event="branch"
-    elif [[ "$cmd" =~ git[[:space:]]+status ]]; then
-      if [ -n "$stdout_head" ]; then
-        event="dirty"
+    # test runner detection (highest priority — check fail before pass)
+    if [[ "$cmd" =~ (^|[[:space:]\;\&\|\(])(pytest|cargo[[:space:]]+test|npm[[:space:]]+test|npx[[:space:]]+vitest|pnpm[[:space:]]+test|uv[[:space:]]+run[[:space:]]+pytest|poetry[[:space:]]+run[[:space:]]+pytest|cargo[[:space:]]+nextest[[:space:]]+run) ]]; then
+      if [[ "$stdout_head" =~ FAILED|failed|error ]]; then
+        event="test_fail"
+      elif [[ "$stdout_head" =~ "test result: ok"|passed ]]; then
+        event="test_pass"
       else
-        event="clean"
+        event="test_run"
       fi
-    elif [[ "$cmd" =~ git[[:space:]]+(merge|rebase) ]]; then
-      if [[ "$stdout_head" =~ CONFLICT|"Merge conflict" ]]; then
-        event="conflict"
+    # git operation detection
+    elif [[ "$cmd" =~ (^|[[:space:]\;\&\|\(])gh[[:space:]]+pr[[:space:]]+create ]]; then
+      event="pr_open"
+    elif [[ "$cmd" =~ (^|[[:space:]\;\&\|\(])git[[:space:]] ]]; then
+      if [[ "$cmd" =~ git[[:space:]]+(checkout|switch)[[:space:]]+-[bc] ]]; then
+        event="branch"
+      elif [[ "$cmd" =~ git[[:space:]]+status ]]; then
+        if [ -n "$stdout_head" ]; then
+          event="dirty"
+        else
+          event="clean"
+        fi
+      elif [[ "$cmd" =~ git[[:space:]]+(merge|rebase) ]]; then
+        if [[ "$stdout_head" =~ CONFLICT|"Merge conflict" ]]; then
+          event="conflict"
+        fi
       fi
     fi
-  fi
 
-elif [ "$tool_name" = "skill" ]; then
-  skill=$(printf '%s' "$input" | jq -r '.tool_input.skill // ""' 2>/dev/null)
-  [ "$skill" = "develop" ] && event="party"
+  elif [ "$tool_name" = "skill" ]; then
+    skill=$(printf '%s' "$input" | jq -r '.tool_input.skill // ""' 2>/dev/null)
+    [ "$skill" = "develop" ] && event="party"
+  fi
 fi
 
 # allowlist guard — only known events pass through
@@ -51,7 +56,8 @@ case "$event" in
   dirty|clean|conflict|branch|pr_open|\
   test_pass|test_fail|test_run|\
   bash|edit|read|glob|grep|write|test|search|commit|push|\
-  party|skill) ;;
+  party|skill|\
+  subagent_start|subagent_stop) ;;
   *) event="" ;;
 esac
 
