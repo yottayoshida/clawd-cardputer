@@ -2,7 +2,7 @@
 set -euo pipefail
 
 HOOK_DIR="$(cd "$(dirname "$0")" && pwd)"
-HOOK_PATH="$HOOK_DIR/advcchi-hook.sh"
+HOOK_PATH="$HOOK_DIR/clawd-hook.sh"
 SETTINGS="$HOME/.claude/settings.json"
 ACTION="${1:-install}"
 
@@ -19,7 +19,7 @@ require_jq() {
 }
 
 is_installed() {
-  jq -e '.hooks.PostToolUse[]? | select(.hooks[]?.command | contains("advcchi-hook.sh"))' \
+  jq -e '.hooks.PostToolUse[]? | select(.hooks[]?.command | contains("clawd-hook.sh"))' \
     "$SETTINGS" > /dev/null 2>&1
 }
 
@@ -27,10 +27,10 @@ case "$ACTION" in
   status)
     require_jq
     if is_installed; then
-      echo "advcchi hook is installed."
-      jq '.hooks.PostToolUse[] | select(.hooks[]?.command | contains("advcchi-hook.sh"))' "$SETTINGS"
+      echo "clawd hook is installed."
+      jq '.hooks.PostToolUse[] | select(.hooks[]?.command | contains("clawd-hook.sh"))' "$SETTINGS"
     else
-      echo "advcchi hook is NOT installed."
+      echo "clawd hook is NOT installed."
     fi
     exit 0
     ;;
@@ -38,12 +38,12 @@ case "$ACTION" in
   uninstall)
     require_jq
     if ! is_installed; then
-      echo "advcchi hook is not installed. Nothing to do."
+      echo "clawd hook is not installed. Nothing to do."
       exit 0
     fi
     cp "$SETTINGS" "$SETTINGS.bak.$(date +%Y%m%d%H%M%S)"
     tmp=$(mktemp)
-    jq '.hooks.PostToolUse |= map(select(.hooks[]?.command | contains("advcchi-hook.sh") | not))' \
+    jq '.hooks.PostToolUse |= map(select(.hooks[]?.command | contains("clawd-hook.sh") | not))' \
       "$SETTINGS" > "$tmp"
     if ! jq empty "$tmp" 2>/dev/null; then
       echo "Error: generated settings.json is invalid. Aborting." >&2
@@ -51,14 +51,14 @@ case "$ACTION" in
       exit 1
     fi
     mv "$tmp" "$SETTINGS"
-    echo "advcchi hook removed. Backup saved."
+    echo "clawd hook removed. Backup saved."
     exit 0
     ;;
 
   --dry-run)
     require_jq
     if is_installed; then
-      echo "advcchi hook is already installed. No changes needed."
+      echo "clawd hook is already installed. No changes needed."
       exit 0
     fi
     echo "Would add to $SETTINGS:"
@@ -79,7 +79,7 @@ case "$ACTION" in
       exit 1
     fi
     if is_installed; then
-      echo "advcchi hook is already installed."
+      echo "clawd hook is already installed."
       exit 0
     fi
 
@@ -105,7 +105,7 @@ case "$ACTION" in
     fi
 
     mv "$tmp" "$SETTINGS"
-    echo "advcchi hook installed."
+    echo "clawd hook installed."
     echo "  PostToolUse entries: $existing_count -> $new_count"
     echo "  Backup: $SETTINGS.bak.*"
     echo ""

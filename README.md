@@ -1,4 +1,4 @@
-# ADVcchi
+# clawd-cardputer
 
 A developer tamagotchi running on M5Stack Cardputer ADV. It reacts to your Claude Code activity via a PostToolUse hook — every `bash`, `edit`, `write`, and `commit` feeds the creature on your desk.
 
@@ -85,19 +85,25 @@ firmware/
   src/clawd_sprites.h   # Pixel-art character data (16x10 grid, 7 expressions)
   assets/source/        # Design notes (not redistributed)
 hook/
-  advcchi-hook.sh       # PostToolUse hook script
+  clawd-hook.sh         # PostToolUse hook script
   install-hook.sh       # Hook installer for settings.json
 ```
 
 ## How the hook works
 
 1. Claude Code fires `PostToolUse` after every tool invocation
-2. `advcchi-hook.sh` reads the JSON event from stdin
+2. `clawd-hook.sh` reads the JSON event from stdin
 3. For Bash tool calls, it parses `tool_input.command` to classify git operations and test results; otherwise falls back to `tool_name`
 4. A single fixed-string event name is sent over USB serial (115200 baud) via pyserial
 5. The Cardputer's firmware matches it against the event table and triggers the appropriate reaction
 
 The hook is non-blocking — if the Cardputer is disconnected, it silently does nothing.
+
+## Configuration
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CLAWD_PORT` | `/dev/cu.usbmodem*` (first match) | Serial port override |
 
 ## License
 

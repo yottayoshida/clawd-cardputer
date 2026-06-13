@@ -56,7 +56,7 @@ case "$event" in
 esac
 
 if [ -n "$event" ]; then
-  port="${ADVCCHI_PORT:-$(ls /dev/cu.usbmodem* 2>/dev/null | head -1)}"
+  port="${CLAWD_PORT:-$(ls /dev/cu.usbmodem* 2>/dev/null | head -1)}"
   if [ -n "$port" ] && [ -c "$port" ]; then
     python3 -c "
 import sys, serial

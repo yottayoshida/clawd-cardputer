@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.2.1] — 2026-06-13
+
+**Summary**: Renamed project from ADVcchi to clawd-cardputer.
+
+### Changed
+- Repository renamed from `advcchi` to `clawd-cardputer`
+- Hook script renamed from `advcchi-hook.sh` to `clawd-hook.sh`
+- Environment variable renamed from `ADVCCHI_PORT` to `CLAWD_PORT`
+
 ## [0.2.0] — 2026-06-13
 
 **Summary**: Clawd now reacts to git operations and test results, and falls asleep when idle.
