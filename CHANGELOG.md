@@ -1,5 +1,36 @@
 # Changelog
 
+## [0.5.0] — 2026-06-18
+
+**Summary**: Role system — Clawd's body color changes based on MCP tool usage and prompt keywords.
+
+### Added
+- Role system: 7 distinct roles (Detective, Messenger, Scribe, Artist, Explorer, Worker, Nervous) with Okabe-Ito color-blind-safe palette (#9, #3)
+- MCP tool detection: hook extracts server name from `mcp__*` tool calls and maps to roles (GitHub→Detective, Slack→Messenger, Notion→Scribe, Figma→Artist, Drive→Explorer)
+- UserPromptSubmit keyword classification: word-boundary matching maps prompt keywords to roles (review→Detective, write→Scribe, build→Worker, test→Nervous, etc.)
+- Warp transition effect: ~5-second hyperspace tunnel (expanding rings from center + ascending sweep tone 300→1500Hz) on role change, with Clawd visible throughout, landing on the target role color
+- Role icon overlay: 2-character text icon displayed at top-right (e.g. "?!" for Detective, "//" for Scribe)
+- Role label in status bar for triple encoding (color + icon + text)
+- Big Job reaction: prompts over 500 characters trigger EXCITED expression with fanfare
+- `r` / `R` keyboard shortcut to toggle role display on/off
+- 10-second auto-timeout for role state, refreshed on re-trigger
+- Sleep entry clears active role; wake-from-sleep processes the waking role event (no event loss)
+
+### Changed
+- `drawClawdToCanvas()` now accepts a color parameter (default: original rust color) for role-based body coloring
+- Hook script extended with MCP detection branch and UserPromptSubmit branch
+- `install-hook.sh` now manages 8 event types (added UserPromptSubmit)
+- Hook allowlist extended with `role_*` and `mode_bigjob` events
+
+### Fixed
+- README: `stop` expression corrected from HAPPY to SURPRISED (matched actual code)
+
+### Security
+- Prompt content never leaves the hook script — only fixed string literals sent over serial
+- UserPromptSubmit output suppressed (`skip_echo=true`) to prevent context injection
+- jq failure falls back to empty string, never echoes raw input
+- Keyword matching uses bash `[[ =~ ]]` with word boundaries, no shell expansion risk
+
 ## [0.4.0] — 2026-06-14
 
 **Summary**: Canvas shrink, mini-Clawd polish, lifecycle event sprites.

@@ -139,10 +139,26 @@ static const int16_t PARTY_MELODY[] = {
 static constexpr int PARTY_MELODY_LEN = 32;
 static constexpr unsigned long PARTY_DURATION_MS = 10000;
 
+// ── role system ──
+
+static clawd::Role currentRole   = clawd::ROLE_NONE;
+static unsigned long roleEndMs   = 0;
+static bool roleEnabled          = true;
+static constexpr unsigned long ROLE_TIMEOUT_MS = 10000;
+
+// warp transition — full-screen tunnel rush + ascending sweep tone
+static bool warpActive             = false;
+static unsigned long warpStartMs   = 0;
+static constexpr unsigned long WARP_FRAME_MS  = 30;
+static constexpr int WARP_TOTAL_FRAMES        = 166;  // ~5 seconds
+static constexpr int WARP_TUNNEL_FRAMES       = 140;
+static constexpr int WARP_FLASH_FRAMES        = 153;
+
 // ── drawing ──
 
 static void drawClawdToCanvas(clawd::Expression expr,
-                              int offsetX, int offsetY) {
+                              int offsetX, int offsetY,
+                              uint16_t color = clawd::COLOR_MAIN) {
   canvas.fillSprite(TFT_BLACK);
 
   const int ox = 1 + offsetX;
@@ -154,7 +170,7 @@ static void drawClawdToCanvas(clawd::Expression expr,
     for (int c = 0; c < clawd::GRID_COLS; c++) {
       if (shape[r][c]) {
         canvas.fillRect(ox + c * clawd::QW, oy + r * clawd::QH,
-                        clawd::QW, clawd::QH, clawd::COLOR_MAIN);
+                        clawd::QW, clawd::QH, color);
       }
     }
   }
@@ -186,12 +202,18 @@ static void showStatus(clawd::Expression expr) {
   M5Cardputer.Display.setTextSize(1);
   M5Cardputer.Display.setTextColor(0x7BEF);
   M5Cardputer.Display.setCursor(4, ty + 3);
+
+  const char *roleLbl = "";
+  if (roleEnabled && currentRole != clawd::ROLE_NONE) {
+    roleLbl = clawd::roleDefFor(currentRole).label;
+  }
+
   if (muted) {
-    M5Cardputer.Display.printf("%s  MUTE  heap:%u",
-                               labels[expr], ESP.getFreeHeap());
+    M5Cardputer.Display.printf("%s  %s  MUTE  heap:%u",
+                               labels[expr], roleLbl, ESP.getFreeHeap());
   } else {
-    M5Cardputer.Display.printf("%s  vol:%d  heap:%u",
-                               labels[expr], volumeLevel, ESP.getFreeHeap());
+    M5Cardputer.Display.printf("%s  %s  vol:%d  heap:%u",
+                               labels[expr], roleLbl, volumeLevel, ESP.getFreeHeap());
   }
 }
 
@@ -296,6 +318,8 @@ static void sleepTransition(unsigned long now) {
   if (sleepState != prev && sleepState == SLEEP_SLEEPING) {
     currentExpr = clawd::EXPR_SLEEPING;
     walkActive = false;
+    currentRole = clawd::ROLE_NONE;
+    warpActive = false;
     for (int i = 0; i < miniCount && i < MAX_MINIS; i++) {
       miniCanvas[i].fillSprite(TFT_BLACK);
       miniCanvas[i].pushSprite(MINI_CANVAS_X[i], MINI_CANVAS_Y);
@@ -361,9 +385,73 @@ static void animTick(unsigned long now) {
     walkActive = true;
   }
 
-  drawClawdToCanvas(currentExpr, 0, bobY + breathY);
+  // Role timeout (silent clear)
+  if (currentRole != clawd::ROLE_NONE && now >= roleEndMs) {
+    currentRole = clawd::ROLE_NONE;
+    showStatus(currentExpr);
+  }
+
+  // Warp draws tunnel background, then falls through to normal Clawd drawing
+  if (warpActive) {
+    unsigned long elapsed = now - warpStartMs;
+    int frame = (int)(elapsed / WARP_FRAME_MS);
+
+    if (frame >= WARP_TOTAL_FRAMES) {
+      warpActive = false;
+      M5Cardputer.Display.fillScreen(TFT_BLACK);
+      showStatus(currentExpr);
+    } else {
+      float progress = (float)frame / WARP_TOTAL_FRAMES;
+
+      // Ascending sweep tone: 300Hz → 1500Hz
+      if (!muted) {
+        int freq = 300 + (int)(progress * 1200);
+        M5Cardputer.Speaker.tone(freq, WARP_FRAME_MS + 15);
+      }
+
+      if (frame < WARP_TUNNEL_FRAMES) {
+        // Tunnel phase: rings continuously spawn from center and expand outward
+        M5Cardputer.Display.fillScreen(TFT_BLACK);
+        int cx = 120, cy = 67;
+        constexpr float RING_CYCLE = 18.0f;
+        for (int r = 0; r < 8; r++) {
+          float raw = (float)frame - r * 2.5f;
+          if (raw < 0.0f) continue;
+          float age = fmodf(raw, RING_CYCLE);
+          float sz = age * age * 3.0f;
+          int hw = (int)sz;
+          int hh = (int)(sz * 0.56f);
+          if (hw > 130) continue;
+          uint16_t col = PARTY_COLORS[(frame + r) % NUM_PARTY_COLORS];
+          M5Cardputer.Display.drawRect(cx - hw, cy - hh, hw * 2, hh * 2, col);
+          if (hw > 4)
+            M5Cardputer.Display.drawRect(cx - hw + 1, cy - hh + 1,
+                                         hw * 2 - 2, hh * 2 - 2, col);
+        }
+      } else if (frame < WARP_FLASH_FRAMES) {
+        // Flash phase: rapid full-screen color bursts
+        uint16_t col = PARTY_COLORS[(frame * 3) % NUM_PARTY_COLORS];
+        M5Cardputer.Display.fillScreen(col);
+      } else {
+        // Landing: role color flash
+        uint16_t roleCol = clawd::roleDefFor(currentRole).color;
+        M5Cardputer.Display.fillScreen(roleCol);
+      }
+      // Fall through to draw Clawd on top of the tunnel background
+    }
+  }
+
+  // Normal drawing: determine body color
+  uint16_t drawColor = clawd::COLOR_MAIN;
+  if (roleEnabled && currentRole != clawd::ROLE_NONE) {
+    drawColor = clawd::roleDefFor(currentRole).color;
+  }
+
+  drawClawdToCanvas(currentExpr, 0, bobY + breathY, drawColor);
   pushCanvas(SPRITE_BASE_X + walkX);
 
+  // Overlay priority: permAsk > role icon
+  bool overlayDrawn = false;
   if (permAskEndMs > 0) {
     if (now < permAskEndMs) {
       int qCount = (int)((now / 300) % 3) + 1;
@@ -371,9 +459,20 @@ static void animTick(unsigned long now) {
       M5Cardputer.Display.setTextColor(TFT_RED);
       M5Cardputer.Display.setCursor(155, 28);
       for (int i = 0; i < qCount; i++) M5Cardputer.Display.print("?");
+      overlayDrawn = true;
     } else {
       permAskEndMs = 0;
       walkActive = true;
+    }
+  }
+
+  if (!overlayDrawn && roleEnabled && currentRole != clawd::ROLE_NONE) {
+    const auto &rd = clawd::roleDefFor(currentRole);
+    if (rd.icon[0] != '\0') {
+      M5Cardputer.Display.setTextSize(2);
+      M5Cardputer.Display.setTextColor(rd.color);
+      M5Cardputer.Display.setCursor(155, 28);
+      M5Cardputer.Display.print(rd.icon);
     }
   }
 
@@ -389,6 +488,8 @@ static void startParty() {
   partyNextNoteMs = 0;
   inReaction = false;
   walkActive = false;
+  currentRole = clawd::ROLE_NONE;
+  warpActive = false;
   sleepState = SLEEP_AWAKE;
   recordActivity();
   Serial.println("[clawd] party mode!");
@@ -525,7 +626,9 @@ static void handleSerialEvent(const char *event) {
 
   if (sleepState == SLEEP_SLEEPING) {
     wakeUp();
-    return;
+    if (strncmp(event, "role_", 5) != 0 && strcmp(event, "mode_bigjob") != 0) {
+      return;
+    }
   }
 
   if (strcmp(event, "party") == 0) {
@@ -547,6 +650,41 @@ static void handleSerialEvent(const char *event) {
     walkActive = false;
     walkX = 0;
     if (!muted) M5Cardputer.Speaker.tone(500, 150);
+    Serial.printf("[clawd] event: %s\n", event);
+    return;
+  }
+
+  // role_* events: set role color with warp transition
+  if (strncmp(event, "role_", 5) == 0) {
+    if (!roleEnabled) return;
+    clawd::Role newRole = clawd::ROLE_NONE;
+    const char *rn = event + 5;
+    if      (strcmp(rn, "detective") == 0) newRole = clawd::ROLE_DETECTIVE;
+    else if (strcmp(rn, "messenger") == 0) newRole = clawd::ROLE_MESSENGER;
+    else if (strcmp(rn, "scribe")    == 0) newRole = clawd::ROLE_SCRIBE;
+    else if (strcmp(rn, "artist")    == 0) newRole = clawd::ROLE_ARTIST;
+    else if (strcmp(rn, "explorer")  == 0) newRole = clawd::ROLE_EXPLORER;
+    else if (strcmp(rn, "worker")    == 0) newRole = clawd::ROLE_WORKER;
+    else if (strcmp(rn, "nervous")   == 0) newRole = clawd::ROLE_NERVOUS;
+
+    if (newRole != clawd::ROLE_NONE) {
+      if (newRole != currentRole) {
+        warpActive = true;
+        warpStartMs = now;
+      }
+      currentRole = newRole;
+      roleEndMs = now + ROLE_TIMEOUT_MS;
+      showStatus(currentExpr);
+      Serial.printf("[clawd] role: %s\n", event);
+    }
+    return;
+  }
+
+  // mode_bigjob: EXCITED reaction with fanfare (not a persistent role)
+  if (strcmp(event, "mode_bigjob") == 0) {
+    fanfarePhase = 0;
+    fanfareNextMs = now;
+    triggerExpression(clawd::EXPR_EXCITED, 2000, 0);
     Serial.printf("[clawd] event: %s\n", event);
     return;
   }
@@ -599,6 +737,17 @@ static void handleKey() {
       if (!muted) M5Cardputer.Speaker.tone(1000, 30);
       showStatus(currentExpr);
       Serial.printf("[clawd] mute=%d\n", muted);
+      return;
+    }
+
+    if (c == 'r' || c == 'R') {
+      roleEnabled = !roleEnabled;
+      if (!roleEnabled) {
+        currentRole = clawd::ROLE_NONE;
+        warpActive = false;
+      }
+      showStatus(currentExpr);
+      Serial.printf("[clawd] role display=%d\n", roleEnabled);
       return;
     }
 

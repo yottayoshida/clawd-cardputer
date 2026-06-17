@@ -8,8 +8,8 @@ ACTION="${1:-install}"
 
 # Single source of truth for all managed hook events.
 # Parallel arrays: EVENT_KEYS[i] is the hook name, EVENT_ARGS[i] is the serial arg.
-EVENT_KEYS=(PostToolUse SubagentStart SubagentStop PostToolUseFailure Stop StopFailure PermissionRequest)
-EVENT_ARGS=(""          subagent_start subagent_stop tool_fail          stop stop_fail  perm_ask)
+EVENT_KEYS=(PostToolUse SubagentStart SubagentStop PostToolUseFailure Stop StopFailure PermissionRequest UserPromptSubmit)
+EVENT_ARGS=(""          subagent_start subagent_stop tool_fail          stop stop_fail  perm_ask         prompt_submit)
 
 usage() {
   echo "Usage: $0 [install|uninstall|status|--dry-run]"
@@ -45,7 +45,8 @@ remove_clawd_hooks() {
     .hooks.PostToolUseFailure = (.hooks.PostToolUseFailure // [] | map(select(.hooks[]?.command | contains("clawd-hook.sh") | not))) |
     .hooks.Stop = (.hooks.Stop // [] | map(select(.hooks[]?.command | contains("clawd-hook.sh") | not))) |
     .hooks.StopFailure = (.hooks.StopFailure // [] | map(select(.hooks[]?.command | contains("clawd-hook.sh") | not))) |
-    .hooks.PermissionRequest = (.hooks.PermissionRequest // [] | map(select(.hooks[]?.command | contains("clawd-hook.sh") | not)))
+    .hooks.PermissionRequest = (.hooks.PermissionRequest // [] | map(select(.hooks[]?.command | contains("clawd-hook.sh") | not))) |
+    .hooks.UserPromptSubmit = (.hooks.UserPromptSubmit // [] | map(select(.hooks[]?.command | contains("clawd-hook.sh") | not)))
   ' "$SETTINGS"
 }
 
@@ -145,14 +146,16 @@ case "$ACTION" in
        --arg cmd_tool_fail "$HOOK_PATH tool_fail" \
        --arg cmd_stop_evt "$HOOK_PATH stop" \
        --arg cmd_stop_fail "$HOOK_PATH stop_fail" \
-       --arg cmd_perm_ask "$HOOK_PATH perm_ask" '
+       --arg cmd_perm_ask "$HOOK_PATH perm_ask" \
+       --arg cmd_prompt "$HOOK_PATH prompt_submit" '
       .hooks.PostToolUse = (.hooks.PostToolUse // []) + [{"hooks": [{"command": $cmd, "type": "command"}], "matcher": "*"}] |
       .hooks.SubagentStart = (.hooks.SubagentStart // []) + [{"hooks": [{"command": $cmd_start, "type": "command"}], "matcher": "*"}] |
       .hooks.SubagentStop = (.hooks.SubagentStop // []) + [{"hooks": [{"command": $cmd_stop, "type": "command"}], "matcher": "*"}] |
       .hooks.PostToolUseFailure = (.hooks.PostToolUseFailure // []) + [{"hooks": [{"command": $cmd_tool_fail, "type": "command"}], "matcher": "*"}] |
       .hooks.Stop = (.hooks.Stop // []) + [{"hooks": [{"command": $cmd_stop_evt, "type": "command"}], "matcher": "*"}] |
       .hooks.StopFailure = (.hooks.StopFailure // []) + [{"hooks": [{"command": $cmd_stop_fail, "type": "command"}], "matcher": "*"}] |
-      .hooks.PermissionRequest = (.hooks.PermissionRequest // []) + [{"hooks": [{"command": $cmd_perm_ask, "type": "command"}], "matcher": "*"}]
+      .hooks.PermissionRequest = (.hooks.PermissionRequest // []) + [{"hooks": [{"command": $cmd_perm_ask, "type": "command"}], "matcher": "*"}] |
+      .hooks.UserPromptSubmit = (.hooks.UserPromptSubmit // []) + [{"hooks": [{"command": $cmd_prompt, "type": "command"}], "matcher": "*"}]
     ' "$SETTINGS" > "$tmp"
 
     if ! jq empty "$tmp" 2>/dev/null; then

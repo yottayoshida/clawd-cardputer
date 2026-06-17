@@ -155,6 +155,52 @@ constexpr uint8_t SHAPE_CONFUSED[GRID_ROWS][GRID_COLS] = {
     {0,0,0,1,0,1,0,0,0,0,1,0,1,0,0,0},
 };
 
+// ── Role system (orthogonal to Expression) ──
+// Okabe-Ito color-blind-safe palette, RGB565
+
+enum Role : uint8_t {
+  ROLE_NONE = 0,
+  ROLE_DETECTIVE,
+  ROLE_MESSENGER,
+  ROLE_SCRIBE,
+  ROLE_ARTIST,
+  ROLE_EXPLORER,
+  ROLE_WORKER,
+  ROLE_NERVOUS,
+  ROLE_COUNT,
+};
+
+struct RoleDef {
+  uint16_t color;
+  char icon[3];
+  char label[12];
+};
+
+constexpr uint16_t CLR_DETECTIVE = ((0x56>>3)<<11)|((0xB4>>2)<<5)|(0xE9>>3); // #56B4E9
+constexpr uint16_t CLR_MESSENGER = ((0xF0>>3)<<11)|((0xE4>>2)<<5)|(0x42>>3); // #F0E442
+constexpr uint16_t CLR_SCRIBE    = ((0x00>>3)<<11)|((0x9E>>2)<<5)|(0x73>>3); // #009E73
+constexpr uint16_t CLR_ARTIST    = ((0xCC>>3)<<11)|((0x79>>2)<<5)|(0xA7>>3); // #CC79A7
+constexpr uint16_t CLR_EXPLORER  = ((0xE6>>3)<<11)|((0x9F>>2)<<5)|(0x00>>3); // #E69F00
+constexpr uint16_t CLR_WORKER    = ((0xD5>>3)<<11)|((0x5E>>2)<<5)|(0x00>>3); // #D55E00
+constexpr uint16_t CLR_NERVOUS   = ((0x00>>3)<<11)|((0x72>>2)<<5)|(0xB2>>3); // #0072B2
+
+constexpr RoleDef ROLE_TABLE[] = {
+    {COLOR_MAIN,    "",   ""},          // ROLE_NONE
+    {CLR_DETECTIVE, "?!", "detective"}, // ROLE_DETECTIVE
+    {CLR_MESSENGER, ">>", "messenger"},
+    {CLR_SCRIBE,    "//", "scribe"},
+    {CLR_ARTIST,    "<>", "artist"},
+    {CLR_EXPLORER,  "[]", "explorer"},
+    {CLR_WORKER,    "{}",  "worker"},
+    {CLR_NERVOUS,   "!!", "nervous"},
+};
+static_assert(sizeof(ROLE_TABLE) / sizeof(ROLE_TABLE[0]) == ROLE_COUNT,
+              "ROLE_TABLE size must match ROLE_COUNT");
+
+inline const RoleDef& roleDefFor(Role r) {
+  return ROLE_TABLE[(r < ROLE_COUNT) ? r : 0];
+}
+
 enum Expression : uint8_t {
   EXPR_IDLE = 0,
   EXPR_BLINK,
