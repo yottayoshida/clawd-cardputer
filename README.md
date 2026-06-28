@@ -1,6 +1,6 @@
 # clawd-cardputer
 
-[![version](https://img.shields.io/badge/version-0.5.0-blue)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-0.5.1-blue)](CHANGELOG.md)
 
 A developer tamagotchi running on M5Stack Cardputer ADV. It reacts to your Claude Code activity via hooks — every tool call, subagent spawn, permission prompt, and session end feeds the creature on your desk.
 
@@ -52,7 +52,7 @@ Only fixed string literals are sent over serial — prompt content never leaves 
 
 ### Mini Clawds (subagent companions)
 
-When Claude Code spawns subagents, up to 2 smaller Clawds appear on the left and right edges of the display. They walk and bob independently. Minis linger for 8 seconds after the last subagent event, then auto-despawn. They clear automatically when the parent enters sleep.
+When Claude Code spawns subagents, up to 2 smaller Clawds appear on the left and right edges of the display. They walk and bob independently. When a subagent stops, its mini dims to half brightness and lingers for 8 seconds before despawning — freeing the slot immediately for new subagents. They clear automatically when the parent enters sleep.
 
 ### Sleep cycle
 

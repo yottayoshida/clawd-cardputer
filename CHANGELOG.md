@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.5.1] — 2026-06-28
+
+**Summary**: Firmware reliability fixes for always-on desk pet usage.
+
+### Fixed
+- Event debounce now only suppresses identical events within 200ms; high-priority events (perm_ask, role_*, subagent_*, stop_fail, party) always pass through immediately (#26)
+- All 14 timer comparisons replaced with rollover-safe helpers (`timeReached`/`elapsedGe`) to prevent timer lockup after ~49.7 days of continuous operation (#29)
+- Mini-Clawds now track active and lingering states separately with per-slot timeout; stopped minis dim to half brightness and free their slot immediately for new spawns (#28)
+- Overlay region (zzz, "???", role icon) is cleared each frame to prevent ghost text artifacts on state transitions (#27)
+- Warp transition uses transparent sprite pushing so Clawd renders without a black rectangle over the tunnel background (#30)
+
 ## [0.5.0] — 2026-06-18
 
 **Summary**: Role system — Clawd's body color changes based on MCP tool usage and prompt keywords.
