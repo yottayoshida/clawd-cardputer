@@ -2,6 +2,29 @@
 #include <cmath>
 #include "clawd_sprites.h"
 
+// ── rollover-safe timer helpers ──
+
+static inline bool timeReached(unsigned long now, unsigned long deadline) {
+  return (int32_t)(now - deadline) >= 0;
+}
+
+static inline bool elapsedGe(unsigned long now, unsigned long base,
+                             unsigned long duration) {
+  return (int32_t)(now - base) >= (int32_t)duration;
+}
+
+// ── overlay region (shared by zzz, permAsk ??, role icon) ──
+
+static constexpr int OVERLAY_X = 155;
+static constexpr int OVERLAY_Y = 28;
+static constexpr int OVERLAY_W = 85;
+static constexpr int OVERLAY_H = 20;
+
+static void clearOverlay() {
+  M5Cardputer.Display.fillRect(OVERLAY_X, OVERLAY_Y,
+                               OVERLAY_W, OVERLAY_H, TFT_BLACK);
+}
+
 // ── walk config ──
 
 static constexpr int WALK_RANGE = 25;
@@ -91,11 +114,11 @@ struct MiniState {
   int walkDir;
   int walkStep;
   unsigned long nextStepMs;
+  bool active;
+  unsigned long lingerEndMs;
 };
 
-static int miniCount = 0;
 static MiniState minis[MAX_MINIS] = {};
-static unsigned long lastMiniEventMs = 0;
 static constexpr unsigned long MINI_TIMEOUT_MS = 8UL * 1000;
 
 // perm_ask "???" overlay (non-blocking, expression unchanged)
@@ -188,7 +211,11 @@ static void pushCanvas(int canvasX) {
     }
     prevCanvasX = canvasX;
   }
-  canvas.pushSprite(canvasX, SPRITE_Y);
+  if (warpActive) {
+    canvas.pushSprite(canvasX, SPRITE_Y, TFT_BLACK);
+  } else {
+    canvas.pushSprite(canvasX, SPRITE_Y);
+  }
 }
 
 static void showStatus(clawd::Expression expr) {
@@ -225,23 +252,35 @@ static void triggerExpression(clawd::Expression expr,
 
 // ── mini-Clawd drawing ──
 
+static uint16_t dimColor(uint16_t c) {
+  return ((c >> 1) & 0x7BEF);
+}
+
+static void clearAllMinis() {
+  for (int i = 0; i < MAX_MINIS; i++) {
+    minis[i].active = false;
+    minis[i].lingerEndMs = 0;
+    miniCanvas[i].fillSprite(TFT_BLACK);
+    miniCanvas[i].pushSprite(MINI_CANVAS_X[i], MINI_CANVAS_Y);
+  }
+}
+
 static void drawMiniClawds(unsigned long now) {
-  if (miniCount <= 0) return;
   if (sleepState == SLEEP_SLEEPING) return;
 
-  if (now - lastMiniEventMs > MINI_TIMEOUT_MS) {
-    for (int i = 0; i < MAX_MINIS; i++) {
-      miniCanvas[i].fillSprite(TFT_BLACK);
-      miniCanvas[i].pushSprite(MINI_CANVAS_X[i], MINI_CANVAS_Y);
-    }
-    miniCount = 0;
-    return;
-  }
-
-  for (int i = 0; i < miniCount && i < MAX_MINIS; i++) {
+  for (int i = 0; i < MAX_MINIS; i++) {
     MiniState &m = minis[i];
 
-    if (now >= m.nextStepMs) {
+    if (!m.active && m.lingerEndMs > 0 && timeReached(now, m.lingerEndMs)) {
+      m.lingerEndMs = 0;
+      miniCanvas[i].fillSprite(TFT_BLACK);
+      miniCanvas[i].pushSprite(MINI_CANVAS_X[i], MINI_CANVAS_Y);
+      continue;
+    }
+
+    if (!m.active && m.lingerEndMs == 0) continue;
+
+    if (m.active && timeReached(now, m.nextStepMs)) {
       if ((esp_random() % 4) == 0) m.walkDir = -m.walkDir;
       m.walkX += m.walkDir * MINI_STEP_PX;
       if (m.walkX > MINI_WALK_RANGE) { m.walkX = MINI_WALK_RANGE; m.walkDir = -1; }
@@ -262,12 +301,13 @@ static void drawMiniClawds(unsigned long now) {
 
     miniCanvas[i].fillSprite(TFT_BLACK);
 
+    uint16_t color = m.active ? MINI_COLORS[i] : dimColor(MINI_COLORS[i]);
     const auto *shape = clawd::shapeFor(clawd::EXPR_HAPPY);
     for (int r = 0; r < clawd::GRID_ROWS; r++) {
       for (int c = 0; c < clawd::GRID_COLS; c++) {
         if (shape[r][c]) {
           miniCanvas[i].fillRect(ox + c * MINI_QW, oy + r * MINI_QH,
-                                  MINI_QW, MINI_QH, MINI_COLORS[i]);
+                                  MINI_QW, MINI_QH, color);
         }
       }
     }
@@ -277,27 +317,33 @@ static void drawMiniClawds(unsigned long now) {
 }
 
 static void spawnMiniClawd() {
-  if (miniCount >= MAX_MINIS) return;
-  int idx = miniCount;
-  minis[idx] = {0, (idx == 0) ? 1 : -1, 0, millis()};
-  miniCount++;
-  lastMiniEventMs = millis();
+  int idx = -1;
+  for (int i = 0; i < MAX_MINIS; i++) {
+    if (!minis[i].active && minis[i].lingerEndMs == 0) { idx = i; break; }
+  }
+  if (idx < 0) return;
+  minis[idx] = {0, (idx == 0) ? 1 : -1, 0, millis(), true, 0};
   fanfarePhase = 0;
   fanfareNextMs = millis();
   triggerExpression(clawd::EXPR_HAPPY, 800, 0);
-  Serial.printf("[clawd] mini spawned (%d active)\n", miniCount);
+  Serial.printf("[clawd] mini spawned (slot %d)\n", idx);
 }
 
 static void despawnMiniClawd() {
-  if (miniCount <= 0) return;
-  lastMiniEventMs = millis();
+  int idx = -1;
+  for (int i = MAX_MINIS - 1; i >= 0; i--) {
+    if (minis[i].active) { idx = i; break; }
+  }
+  if (idx < 0) return;
+  minis[idx].active = false;
+  minis[idx].lingerEndMs = millis() + MINI_TIMEOUT_MS;
   if (!muted) M5Cardputer.Speaker.tone(400, 80);
-  Serial.printf("[clawd] mini stop received (%d active, linger until timeout)\n", miniCount);
+  Serial.printf("[clawd] mini stop (slot %d, lingering)\n", idx);
 }
 
 static void fanfareTick(unsigned long now) {
   if (fanfarePhase < 0 || fanfarePhase >= FANFARE_COUNT) return;
-  if (now < fanfareNextMs) return;
+  if (!timeReached(now, fanfareNextMs)) return;
   const auto &n = FANFARE_NOTES[fanfarePhase];
   if (!muted) M5Cardputer.Speaker.tone(n.freq, n.durMs);
   fanfareNextMs = now + n.durMs + n.gapMs;
@@ -310,20 +356,16 @@ static void fanfareTick(unsigned long now) {
 static void sleepTransition(unsigned long now) {
   if (partyActive || inReaction) return;
 
-  unsigned long idle = now - lastActivityMs;
   SleepState prev = sleepState;
-
-  sleepState = (idle >= SLEEPING_TIMEOUT_MS) ? SLEEP_SLEEPING : SLEEP_AWAKE;
+  sleepState = elapsedGe(now, lastActivityMs, SLEEPING_TIMEOUT_MS)
+                   ? SLEEP_SLEEPING : SLEEP_AWAKE;
 
   if (sleepState != prev && sleepState == SLEEP_SLEEPING) {
     currentExpr = clawd::EXPR_SLEEPING;
     walkActive = false;
     currentRole = clawd::ROLE_NONE;
     warpActive = false;
-    for (int i = 0; i < miniCount && i < MAX_MINIS; i++) {
-      miniCanvas[i].fillSprite(TFT_BLACK);
-      miniCanvas[i].pushSprite(MINI_CANVAS_X[i], MINI_CANVAS_Y);
-    }
+    clearAllMinis();
     showStatus(currentExpr);
   }
 }
@@ -349,16 +391,17 @@ static void animTick(unsigned long now) {
     drawClawdToCanvas(currentExpr, 0, breathY);
     pushCanvas(SPRITE_BASE_X);
 
+    clearOverlay();
     int zCount = (int)((now / 800) % 3) + 1;
     M5Cardputer.Display.setTextSize(2);
     M5Cardputer.Display.setTextColor(0x4A49);
-    M5Cardputer.Display.setCursor(155, 28);
+    M5Cardputer.Display.setCursor(OVERLAY_X, OVERLAY_Y);
     for (int i = 0; i < zCount; i++) M5Cardputer.Display.print("z");
     drawMiniClawds(now);
     return;
   }
 
-  if (walkActive && now >= nextStepMs) {
+  if (walkActive && timeReached(now, nextStepMs)) {
     walkX += walkDir * STEP_PX;
     if (walkX >= WALK_RANGE || walkX <= -WALK_RANGE) walkDir = -walkDir;
     walkStep++;
@@ -371,7 +414,7 @@ static void animTick(unsigned long now) {
   int breathY = (int)(sinf(breathPhase) * (float)BREATH_AMP);
 
   if (!inReaction && currentExpr == clawd::EXPR_IDLE) {
-    if (now > nextBlinkMs) {
+    if (timeReached(now, nextBlinkMs)) {
       currentExpr = clawd::EXPR_BLINK;
       reactionEndMs = now + 150;
       inReaction = true;
@@ -379,15 +422,16 @@ static void animTick(unsigned long now) {
     }
   }
 
-  if (inReaction && now > reactionEndMs) {
+  if (inReaction && timeReached(now, reactionEndMs)) {
     currentExpr = clawd::EXPR_IDLE;
     inReaction = false;
     walkActive = true;
   }
 
   // Role timeout (silent clear)
-  if (currentRole != clawd::ROLE_NONE && now >= roleEndMs) {
+  if (currentRole != clawd::ROLE_NONE && timeReached(now, roleEndMs)) {
     currentRole = clawd::ROLE_NONE;
+    if (!warpActive) clearOverlay();
     showStatus(currentExpr);
   }
 
@@ -451,13 +495,15 @@ static void animTick(unsigned long now) {
   pushCanvas(SPRITE_BASE_X + walkX);
 
   // Overlay priority: permAsk > role icon
+  if (!warpActive) clearOverlay();
+
   bool overlayDrawn = false;
   if (permAskEndMs > 0) {
-    if (now < permAskEndMs) {
+    if (!timeReached(now, permAskEndMs)) {
       int qCount = (int)((now / 300) % 3) + 1;
       M5Cardputer.Display.setTextSize(2);
       M5Cardputer.Display.setTextColor(TFT_RED);
-      M5Cardputer.Display.setCursor(155, 28);
+      M5Cardputer.Display.setCursor(OVERLAY_X, OVERLAY_Y);
       for (int i = 0; i < qCount; i++) M5Cardputer.Display.print("?");
       overlayDrawn = true;
     } else {
@@ -471,7 +517,7 @@ static void animTick(unsigned long now) {
     if (rd.icon[0] != '\0') {
       M5Cardputer.Display.setTextSize(2);
       M5Cardputer.Display.setTextColor(rd.color);
-      M5Cardputer.Display.setCursor(155, 28);
+      M5Cardputer.Display.setCursor(OVERLAY_X, OVERLAY_Y);
       M5Cardputer.Display.print(rd.icon);
     }
   }
@@ -496,7 +542,7 @@ static void startParty() {
 }
 
 static void partyTick(unsigned long now) {
-  if (now > partyEndMs) {
+  if (timeReached(now, partyEndMs)) {
     partyActive = false;
     currentExpr = clawd::EXPR_IDLE;
     inReaction = false;
@@ -554,7 +600,7 @@ static void partyTick(unsigned long now) {
   M5Cardputer.Display.setCursor(70, 135 - 22);
   M5Cardputer.Display.printf("PARTY! %d", remaining);
 
-  if (!muted && now >= partyNextNoteMs) {
+  if (!muted && timeReached(now, partyNextNoteMs)) {
     int freq = PARTY_MELODY[partyNotePos % PARTY_MELODY_LEN];
     if (freq > 0) {
       M5Cardputer.Speaker.tone(freq, 100);
@@ -615,13 +661,29 @@ static const EventDef EVENT_TABLE[] = {
 };
 
 static unsigned long lastEventMs = 0;
+static char lastEventName[16] = {};
 static char serialBuf[32];
 static int  serialPos = 0;
 
+static bool isHighPriority(const char *event) {
+  return strcmp(event, "perm_ask") == 0
+      || strcmp(event, "stop_fail") == 0
+      || strcmp(event, "party") == 0
+      || strncmp(event, "role_", 5) == 0
+      || strcmp(event, "subagent_start") == 0
+      || strcmp(event, "subagent_stop") == 0;
+}
+
 static void handleSerialEvent(const char *event) {
   unsigned long now = millis();
-  if (now - lastEventMs < DEBOUNCE_MS) return;
+  if (!isHighPriority(event)
+      && strcmp(event, lastEventName) == 0
+      && !elapsedGe(now, lastEventMs, DEBOUNCE_MS)) {
+    return;
+  }
   lastEventMs = now;
+  strncpy(lastEventName, event, sizeof(lastEventName) - 1);
+  lastEventName[sizeof(lastEventName) - 1] = '\0';
   recordActivity();
 
   if (sleepState == SLEEP_SLEEPING) {
@@ -704,7 +766,7 @@ static void handleSerialEvent(const char *event) {
 
 static void handleKey() {
   unsigned long now = millis();
-  if (now - lastKeyMs < DEBOUNCE_MS) return;
+  if (!elapsedGe(now, lastKeyMs, DEBOUNCE_MS)) return;
   lastKeyMs = now;
   recordActivity();
   if (sleepState == SLEEP_SLEEPING) {
