@@ -1,5 +1,7 @@
 # clawd-cardputer
 
+> **Note:** This project is no longer actively maintained. It works as-is but no new features or fixes are planned.
+
 [![version](https://img.shields.io/badge/version-0.5.1-blue)](CHANGELOG.md)
 
 A developer tamagotchi running on M5Stack Cardputer ADV. It reacts to your Claude Code activity via hooks — every tool call, subagent spawn, permission prompt, and session end feeds the creature on your desk.
